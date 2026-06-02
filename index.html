@@ -467,9 +467,9 @@
         </label>
         <div class="channel-switch" id="channelSwitch" aria-label="Channel">
           <button data-channel="tech">HN</button>
-          <button data-channel="papers" class="active">Papers</button>
+          <button data-channel="papers">Papers</button>
           <button data-channel="arxiv">arXiv</button>
-          <button data-channel="cited">Cited</button>
+          <button data-channel="cited" class="active">Cited</button>
           <button data-channel="design">DEV</button>
           <button data-channel="github">GitHub</button>
           <button data-channel="hf">HF</button>
@@ -700,13 +700,13 @@
     };
 
     const state = {
-      channel: "papers",
+      channel: "cited",
       tech: { cat: TECH_CATEGORIES[0], custom: "", sort: "top", hours: 168, page: 0, pages: 1, loading: false, zh: true },
       design: { cat: DESIGN_CATEGORIES[0], custom: "", sort: "top", days: 7, page: 1, loading: false, lastCount: 0, zh: true },
       github: { cat: GITHUB_CATEGORIES[0], custom: "", sort: "top", hours: 168, page: 1, total: 0, lastCount: 0, loading: false },
       papers: { cat: PAPERS_CATEGORIES[0], custom: "", sort: "top", page: 0, loading: false, zh: true },
       arxiv: { cat: ARXIV_CATEGORIES[0], custom: "", sort: "top", page: 0, loading: false, zh: true },
-      cited: { cat: CITED_CATEGORIES[0], custom: "", sort: "top", page: 0, loading: false, zh: true },
+      cited: { cat: CITED_CATEGORIES[0], custom: "", sort: "top", years: 0, page: 0, loading: false, zh: true },
       hf: { cat: HF_CATEGORIES[0], custom: "", sort: "top", page: 0, lastCount: 0, loading: false },
     };
 
@@ -800,9 +800,15 @@
 
     function renderRanges(isDesign) {
       const s = currentState();
-      if (state.channel === "hf" || state.channel === "papers" || state.channel === "arxiv" || state.channel === "cited") {
+      if (state.channel === "hf" || state.channel === "papers" || state.channel === "arxiv") {
         rangeEl.classList.add("hidden");
         rangeEl.innerHTML = "";
+        return;
+      }
+      if (state.channel === "cited") {
+        rangeEl.classList.remove("hidden");
+        rangeEl.innerHTML = `<span class="chip" data-y="1">近1年</span><span class="chip" data-y="2">近2年</span><span class="chip" data-y="5">近5年</span><span class="chip" data-y="0">全部</span>`;
+        [...rangeEl.children].forEach((b) => b.classList.toggle("active", parseInt(b.dataset.y, 10) === s.years));
         return;
       }
       rangeEl.innerHTML = isDesign
@@ -1502,6 +1508,7 @@
       p.set("query", s.custom || s.cat.q);
       p.set("limit", "60");
       p.set("fields", "title,abstract,year,venue,citationCount,influentialCitationCount,authors,url,publicationDate");
+      if (s.years > 0) p.set("year", (new Date().getFullYear() - s.years + 1) + "-");
       return `${S2_API}?${p.toString()}`;
     }
 
@@ -1653,7 +1660,7 @@
       const s = currentState();
       s.sort = b.dataset.sort;
       renderSort(state.channel === "design", s.sort);
-      rangeEl.classList.toggle("hidden", state.channel === "hf" || state.channel === "papers" || state.channel === "arxiv" || state.channel === "cited" || (state.channel === "design" && s.sort === "new"));
+      rangeEl.classList.toggle("hidden", state.channel === "hf" || state.channel === "papers" || state.channel === "arxiv" || (state.channel === "design" && s.sort === "new"));
       load(true);
     });
 
@@ -1661,6 +1668,7 @@
       const b = e.target.closest(".chip"); if (!b) return;
       const s = currentState();
       if (state.channel === "design") s.days = parseInt(b.dataset.d, 10);
+      else if (state.channel === "cited") s.years = parseInt(b.dataset.y, 10);
       else s.hours = parseInt(b.dataset.h, 10);
       [...rangeEl.children].forEach((x) => x.classList.toggle("active", x === b));
       load(true);
