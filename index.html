@@ -162,13 +162,19 @@
 
     .channel-switch {
       display: flex;
-      flex: 0 0 auto;
+      flex: 0 1 auto;
+      max-width: 100%;
+      overflow-x: auto;
+      scrollbar-width: none;
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 999px;
       padding: 3px;
     }
+    .channel-switch::-webkit-scrollbar { display: none; }
     .channel-switch button {
+      flex: 0 0 auto;
+      white-space: nowrap;
       border: none;
       background: transparent;
       cursor: pointer;
@@ -460,9 +466,10 @@
           <input id="q" type="text" placeholder="Search anything — e.g. GPT-5, NVIDIA, robotics…" autocomplete="off" />
         </label>
         <div class="channel-switch" id="channelSwitch" aria-label="Channel">
-          <button data-channel="tech" class="active">HN</button>
-          <button data-channel="papers">Papers</button>
+          <button data-channel="tech">HN</button>
+          <button data-channel="papers" class="active">Papers</button>
           <button data-channel="arxiv">arXiv</button>
+          <button data-channel="cited">Cited</button>
           <button data-channel="design">DEV</button>
           <button data-channel="github">GitHub</button>
           <button data-channel="hf">HF</button>
@@ -519,6 +526,7 @@
     const DEV_API = "https://dev.to/api";
     const GITHUB_API = "https://api.github.com";
     const HF_API = "https://huggingface.co/api";
+    const S2_API = "https://api.semanticscholar.org/graph/v1/paper/search";
     const PAPERS_API = "https://huggingface.co/api/daily_papers";
     // arXiv sends no CORS headers; browser fetches go through public CORS proxies (tried in order).
     const ARXIV_API = "https://export.arxiv.org/api/query";
@@ -615,6 +623,16 @@
       { id: "sp", label: "📡 Signal (eess.SP)", value: "eess.SP" },
     ];
 
+    const CITED_CATEGORIES = [
+      { id: "ml", label: "🧠 ML", q: "machine learning" },
+      { id: "llm", label: "🗣 LLM", q: "large language model" },
+      { id: "rl", label: "🎮 RL", q: "reinforcement learning" },
+      { id: "vision", label: "👁 Vision", q: "computer vision deep learning" },
+      { id: "hw", label: "🔌 VLSI/HW", q: "deep learning hardware accelerator" },
+      { id: "eda", label: "🏭 EDA", q: "electronic design automation machine learning" },
+      { id: "sys", label: "🛠 ML Systems", q: "machine learning systems" },
+    ];
+
     const channelMeta = {
       tech: {
         logo: "⚡",
@@ -661,6 +679,15 @@
         footerLabel: "arXiv API",
         footerText: "freshest preprints across CS & EE",
       },
+      cited: {
+        logo: "📈",
+        title: "CitePulse",
+        subtitle: "高被引精选 · 来自 Semantic Scholar",
+        placeholder: "Search high-impact papers — e.g. attention, systolic array, RLHF…",
+        footerUrl: "https://www.semanticscholar.org/product/api",
+        footerLabel: "Semantic Scholar API",
+        footerText: "ranked by citations & influence",
+      },
       hf: {
         logo: "🤗",
         title: "ModelPulse",
@@ -673,12 +700,13 @@
     };
 
     const state = {
-      channel: "tech",
+      channel: "papers",
       tech: { cat: TECH_CATEGORIES[0], custom: "", sort: "top", hours: 168, page: 0, pages: 1, loading: false, zh: true },
       design: { cat: DESIGN_CATEGORIES[0], custom: "", sort: "top", days: 7, page: 1, loading: false, lastCount: 0, zh: true },
       github: { cat: GITHUB_CATEGORIES[0], custom: "", sort: "top", hours: 168, page: 1, total: 0, lastCount: 0, loading: false },
       papers: { cat: PAPERS_CATEGORIES[0], custom: "", sort: "top", page: 0, loading: false, zh: true },
-      arxiv: { cat: ARXIV_CATEGORIES[0], custom: "", sort: "new", page: 0, loading: false, zh: true },
+      arxiv: { cat: ARXIV_CATEGORIES[0], custom: "", sort: "top", page: 0, loading: false, zh: true },
+      cited: { cat: CITED_CATEGORIES[0], custom: "", sort: "top", page: 0, loading: false, zh: true },
       hf: { cat: HF_CATEGORIES[0], custom: "", sort: "top", page: 0, lastCount: 0, loading: false },
     };
 
@@ -697,7 +725,7 @@
     }
 
     function canTranslateChannel() {
-      return state.channel === "tech" || state.channel === "design" || state.channel === "papers" || state.channel === "arxiv";
+      return state.channel === "tech" || state.channel === "design" || state.channel === "papers" || state.channel === "arxiv" || state.channel === "cited";
     }
 
     function escapeHtml(s) {
@@ -772,7 +800,7 @@
 
     function renderRanges(isDesign) {
       const s = currentState();
-      if (state.channel === "hf" || state.channel === "papers" || state.channel === "arxiv") {
+      if (state.channel === "hf" || state.channel === "papers" || state.channel === "arxiv" || state.channel === "cited") {
         rangeEl.classList.add("hidden");
         rangeEl.innerHTML = "";
         return;
@@ -797,6 +825,7 @@
         hf: HF_CATEGORIES,
         papers: PAPERS_CATEGORIES,
         arxiv: ARXIV_CATEGORIES,
+        cited: CITED_CATEGORIES,
       }[state.channel];
       c.innerHTML = "";
       cats.forEach((cat) => {
@@ -1099,6 +1128,7 @@
       if (state.channel === "hf") return loadHf(reset);
       if (state.channel === "papers") return loadPapers(reset);
       if (state.channel === "arxiv") return loadArxiv(reset);
+      if (state.channel === "cited") return loadCited(reset);
       return loadTech(reset);
     }
 
@@ -1438,6 +1468,86 @@
       }
     }
 
+    function citedCardHtml(p) {
+      const url = p.url || (p.paperId ? "https://www.semanticscholar.org/paper/" + p.paperId : "#");
+      const cites = p.citationCount || 0;
+      const infl = p.influentialCitationCount || 0;
+      const hot = cites >= 1000 ? " hot" : "";
+      const flame = cites >= 1000 ? "🔥 " : "";
+      const authors = (p.authors || []).map((a) => a.name).filter(Boolean);
+      const who = authors.length ? authors[0] + (authors.length > 1 ? " 等" : "") : "";
+      const meta = [p.venue, p.year].filter(Boolean).join(" · ");
+      const abs = (p.abstract || "").replace(/\s+/g, " ").trim();
+      return `
+        <article class="card">
+          <div class="source">
+            <span>semanticscholar.org</span>
+            <span class="dot">·</span>
+            <span>${escapeHtml(meta)}</span>
+          </div>
+          <h2 class="tr-title"><a href="${escapeHtml(url)}" class="title-link" target="_blank" rel="noopener"><span class="tr-zh pending"></span><span class="tr-en">${escapeHtml(p.title || "(untitled)")}</span></a></h2>
+          <p class="desc">${escapeHtml(abs.slice(0, 200))}${abs.length > 200 ? "…" : ""}</p>
+          <div class="foot">
+            <span class="stat points${hot}">${flame}📈 ${cites.toLocaleString()} cites</span>
+            <span class="stat react" title="influential citations">⭐ ${infl.toLocaleString()}</span>
+            <span class="spacer"></span>
+            <span class="author">${escapeHtml(who)}</span>
+          </div>
+        </article>`;
+    }
+
+    function buildCitedUrl() {
+      const s = state.cited;
+      const p = new URLSearchParams();
+      p.set("query", s.custom || s.cat.q);
+      p.set("limit", "60");
+      p.set("fields", "title,abstract,year,venue,citationCount,influentialCitationCount,authors,url,publicationDate");
+      return `${S2_API}?${p.toString()}`;
+    }
+
+    async function loadCited(reset) {
+      const s = state.cited;
+      if (reset) { s.page = 0; grid.innerHTML = skeletons(6, false); statusEl.textContent = ""; statusEl.className = "status"; }
+      if (s.loading) return;
+      s.loading = true;
+      moreBtn.disabled = true;
+      if (controller) controller.abort();
+      controller = new AbortController();
+      const myController = controller;
+      let timedOut = false;
+      const timer = setTimeout(() => { timedOut = true; myController.abort(); }, 12000);
+
+      try {
+        const res = await fetch(buildCitedUrl(), { signal: myController.signal });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const data = await res.json();
+        let items = ((data && data.data) || []).filter((x) => x && x.title);
+        // Semantic Scholar search returns by relevance; re-rank client-side by impact or recency.
+        const yr = (x) => new Date(x.publicationDate || (x.year ? x.year + "-01-01" : 0)).getTime();
+        items.sort((a, b) => s.sort === "new" ? yr(b) - yr(a) : (b.citationCount || 0) - (a.citationCount || 0));
+        if (reset) grid.innerHTML = "";
+        if (!items.length) {
+          statusEl.textContent = "No results — try another topic or keyword.";
+        } else {
+          grid.insertAdjacentHTML("beforeend", items.map(citedCardHtml).join(""));
+          statusEl.textContent = "";
+        }
+        countEl.textContent = items.length ? `${items.length} papers · ${s.sort === "new" ? "newest first" : "most cited"} · Semantic Scholar · Fetched ${fetchStamp()}` : "";
+        moreBtn.style.display = "none";
+        lastLoadTs = Date.now();
+        if (s.zh) translateVisible();
+      } catch (e) {
+        if (myController.signal.aborted && !timedOut) return;
+        if (reset) grid.innerHTML = "";
+        statusEl.className = "status err";
+        statusEl.textContent = timedOut ? "⚠️ Semantic Scholar timed out — please refresh." : "⚠️ Could not load Semantic Scholar (it may be rate-limited). Please refresh.";
+      } finally {
+        clearTimeout(timer);
+        s.loading = false;
+        moreBtn.disabled = false;
+      }
+    }
+
     function readerShell(a, bodyHtml) {
       const u = a.user || {};
       const avatar = u.profile_image_90 || u.profile_image || "";
@@ -1543,7 +1653,7 @@
       const s = currentState();
       s.sort = b.dataset.sort;
       renderSort(state.channel === "design", s.sort);
-      rangeEl.classList.toggle("hidden", state.channel === "hf" || state.channel === "papers" || state.channel === "arxiv" || (state.channel === "design" && s.sort === "new"));
+      rangeEl.classList.toggle("hidden", state.channel === "hf" || state.channel === "papers" || state.channel === "arxiv" || state.channel === "cited" || (state.channel === "design" && s.sort === "new"));
       load(true);
     });
 
