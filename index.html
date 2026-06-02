@@ -612,7 +612,7 @@
 
     const state = {
       channel: "tech",
-      tech: { cat: TECH_CATEGORIES[0], custom: "", sort: "top", hours: 168, page: 0, pages: 1, loading: false },
+      tech: { cat: TECH_CATEGORIES[0], custom: "", sort: "top", hours: 168, page: 0, pages: 1, loading: false, zh: true },
       design: { cat: DESIGN_CATEGORIES[0], custom: "", sort: "top", days: 7, page: 1, loading: false, lastCount: 0, zh: true },
       github: { cat: GITHUB_CATEGORIES[0], custom: "", sort: "top", hours: 168, page: 1, total: 0, lastCount: 0, loading: false },
       hf: { cat: HF_CATEGORIES[0], custom: "", sort: "top", page: 0, lastCount: 0, loading: false },
@@ -630,6 +630,10 @@
 
     function currentState() {
       return state[state.channel];
+    }
+
+    function canTranslateChannel() {
+      return state.channel === "tech" || state.channel === "design";
     }
 
     function escapeHtml(s) {
@@ -669,10 +673,11 @@
       const isDesign = state.channel === "design";
       const meta = channelMeta[state.channel];
       const s = currentState();
+      const canTranslate = canTranslateChannel();
 
       document.title = `${meta.title} · multi-source radar`;
       document.body.classList.toggle("design-mode", isDesign);
-      document.body.classList.toggle("show-zh", isDesign && state.design.zh);
+      document.body.classList.toggle("show-zh", canTranslate && !!s.zh);
       $("#brandLogo").textContent = meta.logo;
       $("#brandTitle").textContent = meta.title;
       $("#brandSubtitle").textContent = meta.subtitle;
@@ -688,9 +693,9 @@
       [...$("#channelSwitch").children].forEach((b) => b.classList.toggle("active", b.dataset.channel === state.channel));
       renderSort(isDesign, s.sort);
       renderRanges(isDesign);
-      langToggle.style.display = isDesign ? "" : "none";
-      langToggle.classList.toggle("active", state.design.zh);
-      langToggle.textContent = state.design.zh ? "译 中" : "译 EN";
+      langToggle.style.display = canTranslate ? "" : "none";
+      langToggle.classList.toggle("active", !!s.zh);
+      langToggle.textContent = s.zh ? "译 中" : "译 EN";
       renderChips();
     }
 
@@ -790,7 +795,8 @@
     }
 
     async function translateTitleEl(el) {
-      if (!state.design.zh || !el) return;
+      const s = currentState();
+      if (!canTranslateChannel() || !s.zh || !el) return;
       const zh = el.querySelector(".tr-zh"), en = el.querySelector(".tr-en");
       if (!zh || !en || zh.dataset.filled) return;
       const r = await translateText(en.textContent);
@@ -799,8 +805,10 @@
     }
 
     async function translateVisible() {
-      if (state.channel !== "design" || !state.design.zh) return;
-      for (const t of grid.querySelectorAll(".tr-title")) { await translateTitleEl(t); if (!state.design.zh) return; }
+      const s = currentState();
+      if (!canTranslateChannel() || !s.zh) return;
+      for (const t of grid.querySelectorAll(".tr-title")) { await translateTitleEl(t); if (!s.zh) return; }
+      if (state.channel !== "design") return;
       for (const d of grid.querySelectorAll(".tr-desc")) {
         if (d.dataset.zh) { if (state.design.zh) d.textContent = d.dataset.zh; continue; }
         const r = await translateText(d.dataset.en || "");
@@ -861,7 +869,7 @@
             <span class="dot">·</span>
             <span>${timeAgoSec(hit.created_at_i)}</span>
           </div>
-          <h2><a href="${escapeHtml(url)}" class="title-link" target="_blank" rel="noopener">${escapeHtml(hit.title || hit.story_title || "(untitled)")}</a></h2>
+          <h2 class="tr-title"><a href="${escapeHtml(url)}" class="title-link" target="_blank" rel="noopener"><span class="tr-zh pending"></span><span class="tr-en">${escapeHtml(hit.title || hit.story_title || "(untitled)")}</span></a></h2>
           <div class="foot">
             <span class="stat points${hot}">${flame}▲ ${pts}</span>
             <a class="stat comments" href="${hnUrl}" target="_blank" rel="noopener">
@@ -1051,6 +1059,7 @@
         countEl.textContent = total ? `${total.toLocaleString()} stories · ${s.sort === "new" ? "newest first" : "most upvoted"} · Fetched ${fetchStamp()}` : "";
         moreBtn.style.display = s.page + 1 < s.pages ? "block" : "none";
         lastLoadTs = Date.now();
+        if (s.zh) translateVisible();
       } catch (e) {
         if (e.name === "AbortError") return;
         if (reset) grid.innerHTML = "";
@@ -1305,15 +1314,19 @@
     });
 
     langToggle.addEventListener("click", (e) => {
-      state.design.zh = !state.design.zh;
-      document.body.classList.toggle("show-zh", state.channel === "design" && state.design.zh);
-      e.currentTarget.classList.toggle("active", state.design.zh);
-      e.currentTarget.textContent = state.design.zh ? "译 中" : "译 EN";
-      applyLangToDesc();
-      if (state.design.zh) {
+      const s = currentState();
+      if (!canTranslateChannel()) return;
+      s.zh = !s.zh;
+      document.body.classList.toggle("show-zh", !!s.zh);
+      e.currentTarget.classList.toggle("active", !!s.zh);
+      e.currentTarget.textContent = s.zh ? "译 中" : "译 EN";
+      if (state.channel === "design") applyLangToDesc();
+      if (s.zh) {
         translateVisible();
-        translateTitleEl(readerBody.querySelector(".reader-title"));
-        translateArticle(readerBody.querySelector("#articleBody"));
+        if (state.channel === "design") {
+          translateTitleEl(readerBody.querySelector(".reader-title"));
+          translateArticle(readerBody.querySelector("#articleBody"));
+        }
       }
     });
 
