@@ -461,6 +461,8 @@
         </label>
         <div class="channel-switch" id="channelSwitch" aria-label="Channel">
           <button data-channel="tech" class="active">HN</button>
+          <button data-channel="papers">Papers</button>
+          <button data-channel="arxiv">arXiv</button>
           <button data-channel="design">DEV</button>
           <button data-channel="github">GitHub</button>
           <button data-channel="hf">HF</button>
@@ -517,6 +519,10 @@
     const DEV_API = "https://dev.to/api";
     const GITHUB_API = "https://api.github.com";
     const HF_API = "https://huggingface.co/api";
+    const PAPERS_API = "https://huggingface.co/api/daily_papers";
+    // arXiv sends no CORS headers, so browser fetches are routed through a public CORS proxy.
+    const ARXIV_API = "https://export.arxiv.org/api/query";
+    const ARXIV_PROXY = "https://api.allorigins.win/raw?url=";
     const DEV_HEADERS = { "Accept": "application/vnd.forem.api-v1+json" };
     const PER_PAGE = 24;
 
@@ -528,6 +534,11 @@
       { id: "anthropic", label: "Anthropic", mode: "query", value: "Anthropic" },
       { id: "gemini", label: "Google AI", mode: "query", value: "Gemini" },
       { id: "chips", label: "🔌 Chips/GPU", mode: "query", value: "NVIDIA GPU" },
+      { id: "fpga", label: "🔧 FPGA/RTL", mode: "query", value: "FPGA Verilog" },
+      { id: "riscv", label: "🧩 RISC-V", mode: "query", value: "RISC-V" },
+      { id: "eda", label: "🏭 EDA/Chip", mode: "query", value: "chip design EDA" },
+      { id: "accel", label: "⚙️ Accelerators", mode: "query", value: "AI accelerator inference" },
+      { id: "rl", label: "🎮 RL", mode: "query", value: "reinforcement learning" },
       { id: "startup", label: "🚀 Startups", mode: "query", value: "startup" },
       { id: "funding", label: "💰 Funding", mode: "query", value: "funding raises" },
       { id: "show", label: "🛠 Show HN", mode: "tag", value: "show_hn" },
@@ -558,6 +569,12 @@
       { id: "js", label: "TypeScript", query: "language:TypeScript" },
       { id: "react", label: "⚛️ React", query: "topic:react" },
       { id: "rust", label: "🦀 Rust", query: "language:Rust" },
+      { id: "rl", label: "🎮 RL", query: "topic:reinforcement-learning" },
+      { id: "verilog", label: "🔧 Verilog", query: "topic:verilog" },
+      { id: "fpga", label: "🧩 FPGA", query: "topic:fpga" },
+      { id: "hls", label: "🏭 HLS", query: "topic:high-level-synthesis" },
+      { id: "cuda", label: "⚡ CUDA", query: "topic:cuda" },
+      { id: "mlir", label: "🧱 MLIR", query: "mlir compiler" },
     ];
 
     const HF_CATEGORIES = [
@@ -568,7 +585,30 @@
       { id: "audio", label: "🎧 Audio", search: "", pipeline: "automatic-speech-recognition" },
       { id: "embedding", label: "🔎 Embeddings", search: "embedding", pipeline: "sentence-similarity" },
       { id: "robotics", label: "🤖 Robotics", search: "robotics", pipeline: "" },
+      { id: "rl", label: "🎮 RL", search: "reinforcement", pipeline: "reinforcement-learning" },
+      { id: "video", label: "🎬 Video", search: "", pipeline: "text-to-video" },
       { id: "nvidia", label: "NVIDIA", search: "nvidia", pipeline: "" },
+    ];
+
+    const PAPERS_CATEGORIES = [
+      { id: "hot", label: "🔥 Hot", kw: "" },
+      { id: "llm", label: "🧠 LLM", kw: "llm|language model|gpt|transformer|reasoning" },
+      { id: "rl", label: "🎮 RL", kw: "reinforc|rlhf|policy|reward|agent" },
+      { id: "vision", label: "👁 Vision", kw: "vision|image|video|diffusion|3d|segment|detect" },
+      { id: "speech", label: "🎧 Speech", kw: "speech|audio|tts|asr|voice" },
+      { id: "efficiency", label: "⚡ Efficiency", kw: "quantiz|sparse|distill|kv cache|flash|prune|inference|throughput" },
+      { id: "hardware", label: "🔌 Hardware", kw: "hardware|accelerator|fpga|asic|chip|vlsi|systolic|kernel|cuda|gpu" },
+    ];
+
+    const ARXIV_CATEGORIES = [
+      { id: "ml", label: "🧠 ML (cs.LG)", value: "cs.LG" },
+      { id: "ai", label: "🤖 AI (cs.AI)", value: "cs.AI" },
+      { id: "cl", label: "💬 NLP/LLM (cs.CL)", value: "cs.CL" },
+      { id: "ar", label: "🔌 Hardware (cs.AR)", value: "cs.AR" },
+      { id: "ne", label: "🧩 Neural (cs.NE)", value: "cs.NE" },
+      { id: "cv", label: "👁 Vision (cs.CV)", value: "cs.CV" },
+      { id: "sy", label: "🛠 Systems (eess.SY)", value: "eess.SY" },
+      { id: "sp", label: "📡 Signal (eess.SP)", value: "eess.SP" },
     ];
 
     const channelMeta = {
@@ -599,6 +639,24 @@
         footerLabel: "GitHub Search API",
         footerText: "tracking open-source project momentum",
       },
+      papers: {
+        logo: "📄",
+        title: "PaperPulse",
+        subtitle: "热门 AI 论文 · 来自 Hugging Face Daily Papers",
+        placeholder: "Filter papers — e.g. llm, diffusion, rlhf, accelerator…",
+        footerUrl: "https://huggingface.co/papers",
+        footerLabel: "Hugging Face Daily Papers",
+        footerText: "today's hottest AI research",
+      },
+      arxiv: {
+        logo: "ξ",
+        title: "ArxivPulse",
+        subtitle: "Latest research · live from arXiv",
+        placeholder: "Search arXiv — e.g. mixture of experts, HBM, sparse attention…",
+        footerUrl: "https://arxiv.org",
+        footerLabel: "arXiv API",
+        footerText: "freshest preprints across CS & EE",
+      },
       hf: {
         logo: "🤗",
         title: "ModelPulse",
@@ -615,6 +673,8 @@
       tech: { cat: TECH_CATEGORIES[0], custom: "", sort: "top", hours: 168, page: 0, pages: 1, loading: false, zh: true },
       design: { cat: DESIGN_CATEGORIES[0], custom: "", sort: "top", days: 7, page: 1, loading: false, lastCount: 0, zh: true },
       github: { cat: GITHUB_CATEGORIES[0], custom: "", sort: "top", hours: 168, page: 1, total: 0, lastCount: 0, loading: false },
+      papers: { cat: PAPERS_CATEGORIES[0], custom: "", sort: "top", page: 0, loading: false, zh: true },
+      arxiv: { cat: ARXIV_CATEGORIES[0], custom: "", sort: "new", page: 0, loading: false, zh: true },
       hf: { cat: HF_CATEGORIES[0], custom: "", sort: "top", page: 0, lastCount: 0, loading: false },
     };
 
@@ -633,7 +693,7 @@
     }
 
     function canTranslateChannel() {
-      return state.channel === "tech" || state.channel === "design";
+      return state.channel === "tech" || state.channel === "design" || state.channel === "papers" || state.channel === "arxiv";
     }
 
     function escapeHtml(s) {
@@ -708,7 +768,7 @@
 
     function renderRanges(isDesign) {
       const s = currentState();
-      if (state.channel === "hf") {
+      if (state.channel === "hf" || state.channel === "papers" || state.channel === "arxiv") {
         rangeEl.classList.add("hidden");
         rangeEl.innerHTML = "";
         return;
@@ -731,6 +791,8 @@
         design: DESIGN_CATEGORIES,
         github: GITHUB_CATEGORIES,
         hf: HF_CATEGORIES,
+        papers: PAPERS_CATEGORIES,
+        arxiv: ARXIV_CATEGORIES,
       }[state.channel];
       c.innerHTML = "";
       cats.forEach((cat) => {
@@ -1031,6 +1093,8 @@
       if (state.channel === "design") return loadDesign(reset);
       if (state.channel === "github") return loadGithub(reset);
       if (state.channel === "hf") return loadHf(reset);
+      if (state.channel === "papers") return loadPapers(reset);
+      if (state.channel === "arxiv") return loadArxiv(reset);
       return loadTech(reset);
     }
 
@@ -1183,6 +1247,163 @@
       }
     }
 
+    function paperCardHtml(item) {
+      const p = item.paper || item;
+      const id = p.id || item.id || "";
+      const title = p.title || item.title || "(untitled)";
+      const up = p.upvotes ?? item.upvotes ?? 0;
+      const when = p.publishedAt || item.publishedAt || item.submittedOnDailyAt || new Date().toISOString();
+      const authors = (p.authors || []).map((a) => a.name).filter(Boolean);
+      const who = authors.length ? authors[0] + (authors.length > 1 ? " 等" : "") : "";
+      const hfUrl = "https://huggingface.co/papers/" + encodeURIComponent(id);
+      const arxivUrl = "https://arxiv.org/abs/" + encodeURIComponent(id);
+      const hot = up >= 50 ? " hot" : "";
+      const flame = up >= 50 ? "🔥 " : "";
+      const summary = (p.summary || item.summary || "").replace(/\s+/g, " ").trim();
+      return `
+        <article class="card">
+          <div class="source">
+            <span>huggingface.co/papers</span>
+            <span class="dot">·</span>
+            <span>${timeAgoIso(when)}</span>
+          </div>
+          <h2 class="tr-title"><a href="${escapeHtml(hfUrl)}" class="title-link" target="_blank" rel="noopener"><span class="tr-zh pending"></span><span class="tr-en">${escapeHtml(title)}</span></a></h2>
+          <p class="desc">${escapeHtml(summary.slice(0, 200))}${summary.length > 200 ? "…" : ""}</p>
+          <div class="foot">
+            <span class="stat points${hot}">${flame}▲ ${up}</span>
+            <a class="stat comments" href="${escapeHtml(arxivUrl)}" target="_blank" rel="noopener">arXiv ↗</a>
+            <span class="spacer"></span>
+            <span class="author">${escapeHtml(who)}</span>
+          </div>
+        </article>`;
+    }
+
+    async function loadPapers(reset) {
+      const s = state.papers;
+      if (reset) { s.page = 0; grid.innerHTML = skeletons(6, false); statusEl.textContent = ""; statusEl.className = "status"; }
+      if (s.loading) return;
+      s.loading = true;
+      moreBtn.disabled = true;
+      if (controller) controller.abort();
+      controller = new AbortController();
+
+      try {
+        const res = await fetch(`${PAPERS_API}?limit=100`, { signal: controller.signal });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        let items = await res.json();
+        if (!Array.isArray(items)) items = [];
+        // Category and search keywords are matched client-side over the daily feed.
+        const kw = (s.custom || (s.cat.kw || "")).trim().toLowerCase();
+        if (kw) {
+          const re = new RegExp(kw.split(/\s+/).join("|"), "i");
+          items = items.filter((it) => {
+            const p = it.paper || it;
+            return re.test((p.title || "") + " " + (p.summary || ""));
+          });
+        }
+        const up = (it) => (it.paper || it).upvotes || 0;
+        const dt = (it) => new Date((it.paper || it).publishedAt || it.publishedAt || 0).getTime();
+        items.sort((a, b) => s.sort === "new" ? dt(b) - dt(a) : up(b) - up(a));
+        if (reset) grid.innerHTML = "";
+        if (!items.length) {
+          statusEl.textContent = "No papers matched — try the Hot tab or another keyword.";
+        } else {
+          grid.insertAdjacentHTML("beforeend", items.map(paperCardHtml).join(""));
+          statusEl.textContent = "";
+        }
+        countEl.textContent = items.length ? `${items.length} papers · ${s.sort === "new" ? "newest first" : "most upvoted"} · HF Daily Papers · Fetched ${fetchStamp()}` : "";
+        moreBtn.style.display = "none";
+        lastLoadTs = Date.now();
+        if (s.zh) translateVisible();
+      } catch (e) {
+        if (e.name === "AbortError") return;
+        if (reset) grid.innerHTML = "";
+        statusEl.className = "status err";
+        statusEl.textContent = "⚠️ Could not load papers from Hugging Face. Please refresh.";
+      } finally {
+        s.loading = false;
+        moreBtn.disabled = false;
+      }
+    }
+
+    function arxivCardHtml(entry) {
+      const get = (tag) => (entry.getElementsByTagName(tag)[0] || {}).textContent || "";
+      const title = get("title").replace(/\s+/g, " ").trim();
+      const summary = get("summary").replace(/\s+/g, " ").trim();
+      const published = get("published");
+      const idUrl = get("id");
+      const authors = [...entry.getElementsByTagName("author")].map((a) => (a.getElementsByTagName("name")[0] || {}).textContent).filter(Boolean);
+      const who = authors.length ? authors[0] + (authors.length > 1 ? " 等" : "") : "";
+      const catEl = entry.getElementsByTagName("category")[0];
+      const cat = catEl ? (catEl.getAttribute("term") || "") : "";
+      const tags = [cat, "arXiv"].filter(Boolean);
+      return `
+        <article class="card">
+          <div class="source">
+            <span>arxiv.org</span>
+            <span class="dot">·</span>
+            <span>${timeAgoIso(published)}</span>
+          </div>
+          <div class="tags">${tagPills(tags, 3)}</div>
+          <h2 class="tr-title"><a href="${escapeHtml(idUrl)}" class="title-link" target="_blank" rel="noopener"><span class="tr-zh pending"></span><span class="tr-en">${escapeHtml(title)}</span></a></h2>
+          <p class="desc">${escapeHtml(summary.slice(0, 220))}${summary.length > 220 ? "…" : ""}</p>
+          <div class="foot">
+            <span class="stat">${escapeHtml(cat)}</span>
+            <span class="spacer"></span>
+            <span class="author">${escapeHtml(who)}</span>
+          </div>
+        </article>`;
+    }
+
+    function buildArxivUrl() {
+      const s = state.arxiv;
+      const query = s.custom ? `all:${s.custom}` : `cat:${s.cat.value}`;
+      const p = new URLSearchParams();
+      p.set("search_query", query);
+      p.set("start", "0");
+      p.set("max_results", PER_PAGE);
+      p.set("sortBy", s.sort === "new" ? "submittedDate" : "relevance");
+      p.set("sortOrder", "descending");
+      return ARXIV_PROXY + encodeURIComponent(`${ARXIV_API}?${p.toString()}`);
+    }
+
+    async function loadArxiv(reset) {
+      const s = state.arxiv;
+      if (reset) { s.page = 0; grid.innerHTML = skeletons(6, false); statusEl.textContent = ""; statusEl.className = "status"; }
+      if (s.loading) return;
+      s.loading = true;
+      moreBtn.disabled = true;
+      if (controller) controller.abort();
+      controller = new AbortController();
+
+      try {
+        const res = await fetch(buildArxivUrl(), { signal: controller.signal });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const xml = await res.text();
+        const doc = new DOMParser().parseFromString(xml, "application/xml");
+        const entries = [...doc.getElementsByTagName("entry")];
+        if (reset) grid.innerHTML = "";
+        if (!entries.length) {
+          statusEl.textContent = "No arXiv results — try another keyword or category.";
+        } else {
+          grid.insertAdjacentHTML("beforeend", entries.map(arxivCardHtml).join(""));
+          statusEl.textContent = "";
+        }
+        countEl.textContent = entries.length ? `${entries.length} papers · ${s.sort === "new" ? "newest first" : "most relevant"} · arXiv source · Fetched ${fetchStamp()}` : "";
+        moreBtn.style.display = "none";
+        lastLoadTs = Date.now();
+        if (s.zh) translateVisible();
+      } catch (e) {
+        if (e.name === "AbortError") return;
+        if (reset) grid.innerHTML = "";
+        statusEl.className = "status err";
+        statusEl.textContent = "⚠️ Could not load arXiv (the CORS proxy may be busy). Please refresh.";
+      } finally {
+        s.loading = false;
+        moreBtn.disabled = false;
+      }
+    }
+
     function readerShell(a, bodyHtml) {
       const u = a.user || {};
       const avatar = u.profile_image_90 || u.profile_image || "";
@@ -1288,7 +1509,7 @@
       const s = currentState();
       s.sort = b.dataset.sort;
       renderSort(state.channel === "design", s.sort);
-      rangeEl.classList.toggle("hidden", state.channel === "hf" || (state.channel === "design" && s.sort === "new"));
+      rangeEl.classList.toggle("hidden", state.channel === "hf" || state.channel === "papers" || state.channel === "arxiv" || (state.channel === "design" && s.sort === "new"));
       load(true);
     });
 
