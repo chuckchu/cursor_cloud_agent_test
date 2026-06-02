@@ -460,8 +460,10 @@
           <input id="q" type="text" placeholder="Search anything — e.g. GPT-5, NVIDIA, robotics…" autocomplete="off" />
         </label>
         <div class="channel-switch" id="channelSwitch" aria-label="Channel">
-          <button data-channel="tech" class="active">Tech</button>
-          <button data-channel="design">Design</button>
+          <button data-channel="tech" class="active">HN</button>
+          <button data-channel="design">DEV</button>
+          <button data-channel="github">GitHub</button>
+          <button data-channel="hf">HF</button>
         </div>
         <button class="icon-btn" id="refresh" title="Refresh">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
@@ -513,6 +515,8 @@
 
     const HN_API = "https://hn.algolia.com/api/v1";
     const DEV_API = "https://dev.to/api";
+    const GITHUB_API = "https://api.github.com";
+    const HF_API = "https://huggingface.co/api";
     const DEV_HEADERS = { "Accept": "application/vnd.forem.api-v1+json" };
     const PER_PAGE = 24;
 
@@ -545,6 +549,28 @@
       { id: "accessibility", label: "♿ 无障碍", tag: "accessibility" },
     ];
 
+    const GITHUB_CATEGORIES = [
+      { id: "ai", label: "🤖 AI", query: "topic:artificial-intelligence" },
+      { id: "llm", label: "🧠 LLM", query: "llm" },
+      { id: "agents", label: "🕹 Agents", query: "ai-agent" },
+      { id: "mcp", label: "🔌 MCP", query: "mcp" },
+      { id: "python", label: "🐍 Python", query: "language:Python" },
+      { id: "js", label: "TypeScript", query: "language:TypeScript" },
+      { id: "react", label: "⚛️ React", query: "topic:react" },
+      { id: "rust", label: "🦀 Rust", query: "language:Rust" },
+    ];
+
+    const HF_CATEGORIES = [
+      { id: "trending", label: "🔥 Trending", search: "", pipeline: "" },
+      { id: "llm", label: "🧠 LLM", search: "llm", pipeline: "text-generation" },
+      { id: "vision", label: "👁 Vision", search: "", pipeline: "image-text-to-text" },
+      { id: "image", label: "🎨 Image", search: "", pipeline: "text-to-image" },
+      { id: "audio", label: "🎧 Audio", search: "", pipeline: "automatic-speech-recognition" },
+      { id: "embedding", label: "🔎 Embeddings", search: "embedding", pipeline: "sentence-similarity" },
+      { id: "robotics", label: "🤖 Robotics", search: "robotics", pipeline: "" },
+      { id: "nvidia", label: "NVIDIA", search: "nvidia", pipeline: "" },
+    ];
+
     const channelMeta = {
       tech: {
         logo: "⚡",
@@ -564,12 +590,32 @@
         footerLabel: "DEV (Forem) API",
         footerText: "为设计师打造的潮流雷达",
       },
+      github: {
+        logo: "⌘",
+        title: "OpenPulse",
+        subtitle: "Open source momentum · live from GitHub Search",
+        placeholder: "Search repos — e.g. agents, rag, cuda, vision…",
+        footerUrl: "https://docs.github.com/rest/search/search",
+        footerLabel: "GitHub Search API",
+        footerText: "tracking open-source project momentum",
+      },
+      hf: {
+        logo: "🤗",
+        title: "ModelPulse",
+        subtitle: "AI models · live from Hugging Face Hub",
+        placeholder: "Search models — e.g. llama, diffusion, nvidia, whisper…",
+        footerUrl: "https://huggingface.co/docs/hub/api",
+        footerLabel: "Hugging Face Hub API",
+        footerText: "tracking open AI model momentum",
+      },
     };
 
     const state = {
       channel: "tech",
       tech: { cat: TECH_CATEGORIES[0], custom: "", sort: "top", hours: 168, page: 0, pages: 1, loading: false },
       design: { cat: DESIGN_CATEGORIES[0], custom: "", sort: "top", days: 7, page: 1, loading: false, lastCount: 0, zh: true },
+      github: { cat: GITHUB_CATEGORIES[0], custom: "", sort: "top", hours: 168, page: 1, total: 0, lastCount: 0, loading: false },
+      hf: { cat: HF_CATEGORIES[0], custom: "", sort: "top", page: 0, lastCount: 0, loading: false },
     };
 
     let controller = null;
@@ -587,7 +633,13 @@
     }
 
     function escapeHtml(s) {
-      return (s || "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
+      return String(s ?? "").replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m]));
+    }
+
+    function decodeHtml(s) {
+      const el = document.createElement("textarea");
+      el.innerHTML = s || "";
+      return el.value;
     }
 
     function domainOf(url) {
@@ -614,7 +666,7 @@
       const meta = channelMeta[state.channel];
       const s = currentState();
 
-      document.title = `${meta.title} · ${isDesign ? "Design radar" : "Tech & AI radar"}`;
+      document.title = `${meta.title} · multi-source radar`;
       document.body.classList.toggle("design-mode", isDesign);
       document.body.classList.toggle("show-zh", isDesign && state.design.zh);
       $("#brandLogo").textContent = meta.logo;
@@ -647,6 +699,11 @@
 
     function renderRanges(isDesign) {
       const s = currentState();
+      if (state.channel === "hf") {
+        rangeEl.classList.add("hidden");
+        rangeEl.innerHTML = "";
+        return;
+      }
       rangeEl.innerHTML = isDesign
         ? `<span class="chip" data-d="1">今日</span><span class="chip" data-d="7">本周</span><span class="chip" data-d="30">本月</span><span class="chip" data-d="0">全部</span>`
         : `<span class="chip" data-h="24">24h</span><span class="chip" data-h="168">Week</span><span class="chip" data-h="720">Month</span><span class="chip" data-h="0">All</span>`;
@@ -660,7 +717,12 @@
     function renderChips() {
       const c = $("#chips");
       const s = currentState();
-      const cats = state.channel === "design" ? DESIGN_CATEGORIES : TECH_CATEGORIES;
+      const cats = {
+        tech: TECH_CATEGORIES,
+        design: DESIGN_CATEGORIES,
+        github: GITHUB_CATEGORIES,
+        hf: HF_CATEGORIES,
+      }[state.channel];
       c.innerHTML = "";
       cats.forEach((cat) => {
         const b = document.createElement("button");
@@ -835,6 +897,54 @@
         </article>`;
     }
 
+    function githubCardHtml(repo) {
+      const owner = repo.owner || {};
+      const tags = [repo.language, repo.license && repo.license.spdx_id, "GitHub"].filter(Boolean);
+      return `
+        <article class="card">
+          <div class="source">
+            ${owner.avatar_url ? `<img src="${escapeHtml(owner.avatar_url)}" loading="lazy" referrerpolicy="no-referrer" alt="" onerror="this.style.display='none'" />` : ""}
+            <span>github.com</span>
+            <span class="dot">·</span>
+            <span>${timeAgoIso(repo.pushed_at || repo.updated_at)}</span>
+          </div>
+          <div class="tags">${tagPills(tags, 3)}</div>
+          <h2><a href="${escapeHtml(repo.html_url)}" class="title-link" target="_blank" rel="noopener">${escapeHtml(repo.full_name || repo.name)}</a></h2>
+          <p class="desc">${escapeHtml(repo.description || "No description provided.")}</p>
+          <div class="foot">
+            <span class="stat points">★ ${(repo.stargazers_count || 0).toLocaleString()}</span>
+            <span class="stat">⑂ ${(repo.forks_count || 0).toLocaleString()}</span>
+            <span class="stat">Issues ${(repo.open_issues_count || 0).toLocaleString()}</span>
+            <span class="spacer"></span>
+            <span class="author">${escapeHtml(owner.login || "")}</span>
+          </div>
+        </article>`;
+    }
+
+    function hfCardHtml(model) {
+      const id = model.id || model.modelId || "(unknown model)";
+      const url = `https://huggingface.co/${id}`;
+      const updated = model.lastModified || model.createdAt || new Date().toISOString();
+      const tags = [model.pipeline_tag, model.library_name, "HF"].filter(Boolean);
+      return `
+        <article class="card">
+          <div class="source">
+            <span>huggingface.co</span>
+            <span class="dot">·</span>
+            <span>${timeAgoIso(updated)}</span>
+          </div>
+          <div class="tags">${tagPills(tags, 3)}</div>
+          <h2><a href="${escapeHtml(url)}" class="title-link" target="_blank" rel="noopener">${escapeHtml(id)}</a></h2>
+          <p class="desc">${escapeHtml(model.pipeline_tag || "Public model on the Hugging Face Hub.")}</p>
+          <div class="foot">
+            <span class="stat points">↓ ${(model.downloads || 0).toLocaleString()}</span>
+            <span class="stat react">♥ ${(model.likes || 0).toLocaleString()}</span>
+            <span class="spacer"></span>
+            <span class="author">${escapeHtml(id.includes("/") ? id.split("/")[0] : "community")}</span>
+          </div>
+        </article>`;
+    }
+
     function skeletons(n, design) {
       let html = "";
       for (let i = 0; i < n; i++) {
@@ -875,8 +985,41 @@
       return `${DEV_API}/articles?${p.toString()}`;
     }
 
+    function dateForHours(hours) {
+      const d = new Date(Date.now() - hours * 3600 * 1000);
+      return d.toISOString().slice(0, 10);
+    }
+
+    function buildGithubUrl() {
+      const s = state.github;
+      const p = new URLSearchParams();
+      const base = s.custom || s.cat.query;
+      const range = s.hours > 0 ? ` pushed:>${dateForHours(s.hours)}` : "";
+      p.set("q", `${base}${range}`);
+      p.set("sort", s.sort === "new" ? "updated" : "stars");
+      p.set("order", "desc");
+      p.set("per_page", PER_PAGE);
+      p.set("page", s.page);
+      return `${GITHUB_API}/search/repositories?${p.toString()}`;
+    }
+
+    function buildHfUrl() {
+      const s = state.hf;
+      const p = new URLSearchParams();
+      const query = s.custom || s.cat.search;
+      if (query) p.set("search", query);
+      if (!s.custom && s.cat.pipeline) p.set("pipeline_tag", s.cat.pipeline);
+      p.set("sort", s.sort === "new" ? "lastModified" : "trendingScore");
+      p.set("limit", PER_PAGE);
+      p.set("full", "true");
+      return `${HF_API}/models?${p.toString()}`;
+    }
+
     async function load(reset) {
-      return state.channel === "design" ? loadDesign(reset) : loadTech(reset);
+      if (state.channel === "design") return loadDesign(reset);
+      if (state.channel === "github") return loadGithub(reset);
+      if (state.channel === "hf") return loadHf(reset);
+      return loadTech(reset);
     }
 
     async function loadTech(reset) {
@@ -948,6 +1091,80 @@
         if (reset) grid.innerHTML = "";
         statusEl.className = "status err";
         statusEl.textContent = "⚠️ 加载失败，请检查网络后点刷新重试。";
+      } finally {
+        s.loading = false;
+        moreBtn.disabled = false;
+      }
+    }
+
+    async function loadGithub(reset) {
+      const s = state.github;
+      if (reset) { s.page = 1; grid.innerHTML = skeletons(6, false); statusEl.textContent = ""; statusEl.className = "status"; }
+      if (s.loading) return;
+      s.loading = true;
+      moreBtn.disabled = true;
+      if (controller) controller.abort();
+      controller = new AbortController();
+
+      try {
+        const res = await fetch(buildGithubUrl(), { signal: controller.signal });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const data = await res.json();
+        const items = data.items || [];
+        s.total = Math.min(data.total_count || 0, 1000);
+        s.lastCount = items.length;
+        if (reset) grid.innerHTML = "";
+        if (!items.length && reset) {
+          statusEl.textContent = "No repositories found — try another keyword or widen the time range.";
+        } else {
+          grid.insertAdjacentHTML("beforeend", items.map(githubCardHtml).join(""));
+          statusEl.textContent = "";
+        }
+        const shown = grid.querySelectorAll(".card:not(.skeleton)").length;
+        countEl.textContent = shown ? `${shown.toLocaleString()} repos · ${s.sort === "new" ? "recently updated" : "most starred"} · GitHub source` : "";
+        moreBtn.style.display = s.page * PER_PAGE < s.total && s.lastCount === PER_PAGE ? "block" : "none";
+        lastLoadTs = Date.now();
+      } catch (e) {
+        if (e.name === "AbortError") return;
+        if (reset) grid.innerHTML = "";
+        statusEl.className = "status err";
+        statusEl.textContent = "⚠️ Could not load GitHub repositories. The public API may be rate limited.";
+      } finally {
+        s.loading = false;
+        moreBtn.disabled = false;
+      }
+    }
+
+    async function loadHf(reset) {
+      const s = state.hf;
+      if (reset) { s.page = 0; grid.innerHTML = skeletons(6, false); statusEl.textContent = ""; statusEl.className = "status"; }
+      if (s.loading) return;
+      s.loading = true;
+      moreBtn.disabled = true;
+      if (controller) controller.abort();
+      controller = new AbortController();
+
+      try {
+        const res = await fetch(buildHfUrl(), { signal: controller.signal });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const items = await res.json();
+        s.lastCount = Array.isArray(items) ? items.length : 0;
+        if (reset) grid.innerHTML = "";
+        if (!s.lastCount && reset) {
+          statusEl.textContent = "No Hugging Face models found — try another keyword.";
+        } else {
+          grid.insertAdjacentHTML("beforeend", items.map(hfCardHtml).join(""));
+          statusEl.textContent = "";
+        }
+        const shown = grid.querySelectorAll(".card:not(.skeleton)").length;
+        countEl.textContent = shown ? `${shown.toLocaleString()} models · ${s.sort === "new" ? "recently updated" : "trending"} · Hugging Face source` : "";
+        moreBtn.style.display = "none";
+        lastLoadTs = Date.now();
+      } catch (e) {
+        if (e.name === "AbortError") return;
+        if (reset) grid.innerHTML = "";
+        statusEl.className = "status err";
+        statusEl.textContent = "⚠️ Could not load Hugging Face models. The public API may be busy.";
       } finally {
         s.loading = false;
         moreBtn.disabled = false;
@@ -1059,7 +1276,7 @@
       const s = currentState();
       s.sort = b.dataset.sort;
       renderSort(state.channel === "design", s.sort);
-      rangeEl.classList.toggle("hidden", state.channel === "design" && s.sort === "new");
+      rangeEl.classList.toggle("hidden", state.channel === "hf" || (state.channel === "design" && s.sort === "new"));
       load(true);
     });
 
