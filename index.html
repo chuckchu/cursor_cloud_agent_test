@@ -706,7 +706,7 @@
       github: { cat: GITHUB_CATEGORIES[0], custom: "", sort: "top", hours: 168, page: 1, total: 0, lastCount: 0, loading: false },
       papers: { cat: PAPERS_CATEGORIES[0], custom: "", sort: "top", page: 0, loading: false, zh: true },
       arxiv: { cat: ARXIV_CATEGORIES[0], custom: "", sort: "top", page: 0, loading: false, zh: true },
-      cited: { cat: CITED_CATEGORIES[0], custom: "", sort: "top", years: 0, page: 0, loading: false, zh: true },
+      cited: { cat: CITED_CATEGORIES[0], custom: "", sort: "top", days: 90, page: 0, loading: false, zh: true },
       hf: { cat: HF_CATEGORIES[0], custom: "", sort: "top", page: 0, lastCount: 0, loading: false },
     };
 
@@ -807,8 +807,8 @@
       }
       if (state.channel === "cited") {
         rangeEl.classList.remove("hidden");
-        rangeEl.innerHTML = `<span class="chip" data-y="1">近1年</span><span class="chip" data-y="2">近2年</span><span class="chip" data-y="5">近5年</span><span class="chip" data-y="0">全部</span>`;
-        [...rangeEl.children].forEach((b) => b.classList.toggle("active", parseInt(b.dataset.y, 10) === s.years));
+        rangeEl.innerHTML = `<span class="chip" data-d="7">一周</span><span class="chip" data-d="30">一个月</span><span class="chip" data-d="90">三个月</span><span class="chip" data-d="0">全部</span>`;
+        [...rangeEl.children].forEach((b) => b.classList.toggle("active", parseInt(b.dataset.d, 10) === s.days));
         return;
       }
       rangeEl.innerHTML = isDesign
@@ -1514,7 +1514,8 @@
       p.set("search", s.custom || s.cat.q);
       p.set("sort", s.sort === "new" ? "publication_date:desc" : "cited_by_count:desc");
       p.set("per-page", "50");
-      if (s.years > 0) p.set("filter", "from_publication_date:" + (new Date().getFullYear() - s.years + 1) + "-01-01");
+      // Recency window in days (一周/一个月/三个月) -> OpenAlex from_publication_date
+      if (s.days > 0) p.set("filter", "from_publication_date:" + new Date(Date.now() - s.days * 86400000).toISOString().slice(0, 10));
       p.set("mailto", "techpulse.reader@example.com");
       return `${OPENALEX_API}?${p.toString()}`;
     }
@@ -1675,7 +1676,7 @@
       const b = e.target.closest(".chip"); if (!b) return;
       const s = currentState();
       if (state.channel === "design") s.days = parseInt(b.dataset.d, 10);
-      else if (state.channel === "cited") s.years = parseInt(b.dataset.y, 10);
+      else if (state.channel === "cited") s.days = parseInt(b.dataset.d, 10);
       else s.hours = parseInt(b.dataset.h, 10);
       [...rangeEl.children].forEach((x) => x.classList.toggle("active", x === b));
       load(true);
