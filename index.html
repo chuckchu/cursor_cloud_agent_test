@@ -528,13 +528,10 @@
     const HF_API = "https://huggingface.co/api";
     const OPENALEX_API = "https://api.openalex.org/works";
     const PAPERS_API = "https://huggingface.co/api/daily_papers";
-    // arXiv sends no CORS headers; browser fetches go through public CORS proxies (tried in order).
+    // arXiv's Atom API does not send browser CORS headers. Leave empty for a fully static app;
+    // deployments that own a tiny CORS proxy can set this to "/api/arxiv?url=" or use "{url}".
     const ARXIV_API = "https://export.arxiv.org/api/query";
-    const ARXIV_PROXIES = [
-      "https://corsproxy.io/?url=",
-      "https://api.allorigins.win/raw?url=",
-      "https://thingproxy.freeboard.io/fetch/",
-    ];
+    const ARXIV_CORS_PROXY = "";
     const DEV_HEADERS = { "Accept": "application/vnd.forem.api-v1+json" };
     const PER_PAGE = 24;
 
@@ -613,14 +610,14 @@
     ];
 
     const ARXIV_CATEGORIES = [
-      { id: "ml", label: "🧠 ML (cs.LG)", value: "cs.LG" },
-      { id: "ai", label: "🤖 AI (cs.AI)", value: "cs.AI" },
-      { id: "cl", label: "💬 NLP/LLM (cs.CL)", value: "cs.CL" },
-      { id: "ar", label: "🔌 Hardware (cs.AR)", value: "cs.AR" },
-      { id: "ne", label: "🧩 Neural (cs.NE)", value: "cs.NE" },
-      { id: "cv", label: "👁 Vision (cs.CV)", value: "cs.CV" },
-      { id: "sy", label: "🛠 Systems (eess.SY)", value: "eess.SY" },
-      { id: "sp", label: "📡 Signal (eess.SP)", value: "eess.SP" },
+      { id: "ml", label: "🧠 ML (cs.LG)", value: "cs.LG", openAlex: "machine learning" },
+      { id: "ai", label: "🤖 AI (cs.AI)", value: "cs.AI", openAlex: "artificial intelligence" },
+      { id: "cl", label: "💬 NLP/LLM (cs.CL)", value: "cs.CL", openAlex: "natural language processing large language models" },
+      { id: "ar", label: "🔌 Hardware (cs.AR)", value: "cs.AR", openAlex: "computer architecture hardware accelerator" },
+      { id: "ne", label: "🧩 Neural (cs.NE)", value: "cs.NE", openAlex: "neural computation neural networks" },
+      { id: "cv", label: "👁 Vision (cs.CV)", value: "cs.CV", openAlex: "computer vision deep learning" },
+      { id: "sy", label: "🛠 Systems (eess.SY)", value: "eess.SY", openAlex: "systems control engineering" },
+      { id: "sp", label: "📡 Signal (eess.SP)", value: "eess.SP", openAlex: "signal processing" },
     ];
 
     const CITED_CATEGORIES = [
@@ -1420,31 +1417,116 @@
       return `${ARXIV_API}?${p.toString()}`;
     }
 
-    async function fetchViaProxies(rawUrl, signal, perTryMs) {
-      // Try each CORS proxy in turn; first one that returns a usable body wins.
-      let lastErr = null;
-      for (const proxy of ARXIV_PROXIES) {
-        if (signal.aborted) throw new DOMException("aborted", "AbortError");
-        const ac = new AbortController();
-        const onAbort = () => ac.abort();
-        signal.addEventListener("abort", onAbort);
-        const timer = setTimeout(() => ac.abort(), perTryMs);
-        try {
-          const target = proxy.endsWith("=") ? proxy + encodeURIComponent(rawUrl) : proxy + rawUrl;
-          const res = await fetch(target, { signal: ac.signal });
-          if (!res.ok) throw new Error("HTTP " + res.status);
-          const text = await res.text();
-          if (text && text.indexOf("<entry") !== -1) return text;
-          lastErr = new Error("empty response");
-        } catch (e) {
-          if (signal.aborted) throw new DOMException("aborted", "AbortError");
-          lastErr = e; // timeout or proxy error -> try the next proxy
-        } finally {
-          clearTimeout(timer);
-          signal.removeEventListener("abort", onAbort);
+    function buildArxivOpenAlexUrl() {
+      const s = state.arxiv;
+      const p = new URLSearchParams();
+      p.set("search", s.custom || s.cat.openAlex || s.cat.value);
+      p.set("per-page", "50");
+      const filters = ["type:preprint", "has_abstract:true"];
+      if (s.days > 0) filters.push("from_publication_date:" + new Date(Date.now() - s.days * 86400000).toISOString().slice(0, 10));
+      p.set("filter", filters.join(","));
+      if (s.sort === "new") p.set("sort", "publication_date:desc");
+      p.set("mailto", "techpulse.reader@example.com");
+      return `${OPENALEX_API}?${p.toString()}`;
+    }
+
+    function arxivExternalUrl() {
+      const s = state.arxiv;
+      if (!s.custom) return `https://arxiv.org/list/${encodeURIComponent(s.cat.value)}/recent`;
+      const p = new URLSearchParams();
+      p.set("query", s.custom);
+      p.set("searchtype", "all");
+      p.set("abstracts", "show");
+      p.set("order", s.sort === "new" ? "-announced_date_first" : "-relevance");
+      p.set("size", "50");
+      return `https://arxiv.org/search/?${p.toString()}`;
+    }
+
+    function arxivProxyUrl(rawUrl) {
+      if (!ARXIV_CORS_PROXY) return "";
+      if (ARXIV_CORS_PROXY.includes("{url}")) return ARXIV_CORS_PROXY.replace("{url}", encodeURIComponent(rawUrl));
+      return ARXIV_CORS_PROXY + encodeURIComponent(rawUrl);
+    }
+
+    async function fetchArxivXml(rawUrl, signal, perTryMs) {
+      const target = arxivProxyUrl(rawUrl);
+      if (!target) throw new Error("No arXiv CORS proxy configured");
+      const ac = new AbortController();
+      const onAbort = () => ac.abort();
+      signal.addEventListener("abort", onAbort);
+      const timer = setTimeout(() => ac.abort(), perTryMs);
+      try {
+        const res = await fetch(target, { signal: ac.signal });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const text = await res.text();
+        if (text && text.indexOf("<feed") !== -1) return text;
+        throw new Error("invalid arXiv feed");
+      } finally {
+        clearTimeout(timer);
+        signal.removeEventListener("abort", onAbort);
+      }
+    }
+
+    function arxivIdFromWork(w) {
+      const doi = String((w && (w.doi || (w.ids && w.ids.doi))) || "");
+      const doiMatch = doi.match(/10\.48550\/arxiv\.([^/#?]+)/i);
+      if (doiMatch) return doiMatch[1];
+      const locs = [w && w.primary_location, ...((w && w.locations) || [])].filter(Boolean);
+      for (const loc of locs) {
+        for (const key of ["landing_page_url", "pdf_url"]) {
+          const url = String(loc[key] || "");
+          const match = url.match(/arxiv\.org\/(?:abs|pdf)\/([^?#/]+?)(?:\.pdf)?(?:[?#].*)?$/i);
+          if (match) return match[1];
         }
       }
-      throw (lastErr || new Error("all proxies failed"));
+      return "";
+    }
+
+    function arxivWorkUrl(w) {
+      const arxivId = arxivIdFromWork(w);
+      if (arxivId) return "https://arxiv.org/abs/" + encodeURI(arxivId);
+      const loc = (w && w.primary_location) || {};
+      return loc.landing_page_url || (w && w.open_access && w.open_access.oa_url) || (w && (w.doi || w.id)) || arxivExternalUrl();
+    }
+
+    function arxivOpenAlexCardHtml(w) {
+      const title = w.display_name || "(untitled)";
+      const authors = (w.authorships || []).map((a) => a.author && a.author.display_name).filter(Boolean);
+      const who = authors.length ? authors[0] + (authors.length > 1 ? " 等" : "") : "";
+      const abs = openAlexAbstract(w.abstract_inverted_index);
+      const date = w.publication_date || (w.publication_year ? w.publication_year + "-01-01" : "");
+      const when = date ? timeAgoIso(date) : "date unknown";
+      const tags = [state.arxiv.cat.value, "OpenAlex", arxivIdFromWork(w) ? "arXiv" : "preprint"];
+      return `
+        <article class="card">
+          <div class="source">
+            <span>openalex.org</span>
+            <span class="dot">·</span>
+            <span>${escapeHtml(when)}</span>
+          </div>
+          <div class="tags">${tagPills(tags, 3)}</div>
+          <h2 class="tr-title"><a href="${escapeHtml(arxivWorkUrl(w))}" class="title-link" target="_blank" rel="noopener"><span class="tr-zh pending"></span><span class="tr-en">${escapeHtml(title)}</span></a></h2>
+          <p class="desc">${escapeHtml(abs.slice(0, 220))}${abs.length > 220 ? "…" : ""}</p>
+          <div class="foot">
+            <span class="stat">metadata fallback</span>
+            <span class="spacer"></span>
+            <span class="author">${escapeHtml(who)}</span>
+          </div>
+        </article>`;
+    }
+
+    function arxivFallbackCardHtml(reason) {
+      return `
+        <article class="card">
+          <div class="source"><span>arxiv.org</span><span class="dot">·</span><span>external results</span></div>
+          <h2><a href="${escapeHtml(arxivExternalUrl())}" class="title-link" target="_blank" rel="noopener">Open arXiv results ↗</a></h2>
+          <p class="desc">${escapeHtml(reason)} A static page cannot reliably read export.arxiv.org without CORS headers or an owned proxy.</p>
+          <div class="foot">
+            <span class="stat">${escapeHtml(state.arxiv.custom || state.arxiv.cat.value)}</span>
+            <span class="spacer"></span>
+            <span class="author">arXiv</span>
+          </div>
+        </article>`;
     }
 
     async function loadArxiv(reset) {
@@ -1456,28 +1538,59 @@
       if (controller) controller.abort();
       controller = new AbortController();
       const myController = controller;
+      let timedOut = false;
+      const timer = setTimeout(() => { timedOut = true; myController.abort(); }, 14000);
 
       try {
-        const xml = await fetchViaProxies(buildArxivUrl(), myController.signal, 9000);
-        const doc = new DOMParser().parseFromString(xml, "application/xml");
-        const entries = [...doc.getElementsByTagName("entry")];
+        if (ARXIV_CORS_PROXY) {
+          try {
+            const xml = await fetchArxivXml(buildArxivUrl(), myController.signal, 9000);
+            const doc = new DOMParser().parseFromString(xml, "application/xml");
+            const entries = [...doc.getElementsByTagName("entry")];
+            if (reset) grid.innerHTML = "";
+            if (!entries.length) {
+              statusEl.textContent = "No arXiv results — try another keyword or category.";
+            } else {
+              grid.insertAdjacentHTML("beforeend", entries.map(arxivCardHtml).join(""));
+              statusEl.textContent = "";
+            }
+            countEl.textContent = entries.length ? `${entries.length} papers · ${s.sort === "new" ? "newest first" : "most relevant"} · arXiv source · Fetched ${fetchStamp()}` : "";
+            moreBtn.style.display = "none";
+            lastLoadTs = Date.now();
+            if (s.zh) translateVisible();
+            return;
+          } catch (e) {
+            if (myController.signal.aborted) throw e;
+          }
+        }
+
+        const res = await fetch(buildArxivOpenAlexUrl(), { signal: myController.signal });
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const data = await res.json();
+        const entries = ((data && data.results) || []).filter((x) => x && x.display_name);
+        if (s.sort === "new") {
+          entries.sort((a, b) => new Date(b.publication_date || 0) - new Date(a.publication_date || 0));
+        }
         if (reset) grid.innerHTML = "";
         if (!entries.length) {
-          statusEl.textContent = "No arXiv results — try another keyword or category.";
+          if (reset) grid.innerHTML = arxivFallbackCardHtml("No matching preprint metadata was found.");
+          statusEl.textContent = "No preprint metadata — try another keyword or open exact arXiv results.";
         } else {
-          grid.insertAdjacentHTML("beforeend", entries.map(arxivCardHtml).join(""));
-          statusEl.textContent = "";
+          grid.insertAdjacentHTML("beforeend", entries.map(arxivOpenAlexCardHtml).join(""));
+          statusEl.className = "status";
+          statusEl.textContent = "Using OpenAlex metadata because export.arxiv.org is not CORS-readable from a static page.";
         }
-        countEl.textContent = entries.length ? `${entries.length} papers · ${s.sort === "new" ? "newest first" : "most relevant"} · arXiv source · Fetched ${fetchStamp()}` : "";
+        countEl.textContent = entries.length ? `${entries.length} papers · ${s.sort === "new" ? "newest first" : "best match"} · OpenAlex metadata + arXiv links · Fetched ${fetchStamp()}` : "";
         moreBtn.style.display = "none";
         lastLoadTs = Date.now();
         if (s.zh) translateVisible();
       } catch (e) {
-        if (myController.signal.aborted || e.name === "AbortError") return;
-        if (reset) grid.innerHTML = "";
+        if (myController.signal.aborted && !timedOut) return;
+        if (reset) grid.innerHTML = arxivFallbackCardHtml(timedOut ? "Paper metadata timed out." : "Paper metadata could not be loaded.");
         statusEl.className = "status err";
-        statusEl.textContent = "⚠️ Could not load arXiv — public CORS proxies are slow or blocked. Try again, or use a dedicated proxy/backend.";
+        statusEl.textContent = "⚠️ Could not load paper metadata. Use the arXiv link card, or configure ARXIV_CORS_PROXY for exact in-page Atom results.";
       } finally {
+        clearTimeout(timer);
         s.loading = false;
         moreBtn.disabled = false;
       }
