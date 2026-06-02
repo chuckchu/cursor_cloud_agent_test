@@ -705,7 +705,7 @@
       design: { cat: DESIGN_CATEGORIES[0], custom: "", sort: "top", days: 7, page: 1, loading: false, lastCount: 0, zh: true },
       github: { cat: GITHUB_CATEGORIES[0], custom: "", sort: "top", hours: 168, page: 1, total: 0, lastCount: 0, loading: false },
       papers: { cat: PAPERS_CATEGORIES[0], custom: "", sort: "top", page: 0, loading: false, zh: true },
-      arxiv: { cat: ARXIV_CATEGORIES[0], custom: "", sort: "top", page: 0, loading: false, zh: true },
+      arxiv: { cat: ARXIV_CATEGORIES[0], custom: "", sort: "top", days: 90, page: 0, loading: false, zh: true },
       cited: { cat: CITED_CATEGORIES[0], custom: "", sort: "top", days: 90, page: 0, loading: false, zh: true },
       hf: { cat: HF_CATEGORIES[0], custom: "", sort: "top", page: 0, lastCount: 0, loading: false },
     };
@@ -800,12 +800,12 @@
 
     function renderRanges(isDesign) {
       const s = currentState();
-      if (state.channel === "hf" || state.channel === "papers" || state.channel === "arxiv") {
+      if (state.channel === "hf" || state.channel === "papers") {
         rangeEl.classList.add("hidden");
         rangeEl.innerHTML = "";
         return;
       }
-      if (state.channel === "cited") {
+      if (state.channel === "cited" || state.channel === "arxiv") {
         rangeEl.classList.remove("hidden");
         rangeEl.innerHTML = `<span class="chip" data-d="7">一周</span><span class="chip" data-d="30">一个月</span><span class="chip" data-d="90">三个月</span><span class="chip" data-d="0">全部</span>`;
         [...rangeEl.children].forEach((b) => b.classList.toggle("active", parseInt(b.dataset.d, 10) === s.days));
@@ -1399,9 +1399,18 @@
         </article>`;
     }
 
+    function arxivDateFilter(days) {
+      // arXiv expects submittedDate:[YYYYMMDDHHMM TO YYYYMMDDHHMM] (UTC)
+      const pad = (n) => String(n).padStart(2, "0");
+      const fmt = (d) => `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}`;
+      const from = new Date(Date.now() - days * 86400000);
+      return `submittedDate:[${fmt(from)} TO ${fmt(new Date())}]`;
+    }
+
     function buildArxivUrl() {
       const s = state.arxiv;
-      const query = s.custom ? `all:${s.custom}` : `cat:${s.cat.value}`;
+      let query = s.custom ? `all:${s.custom}` : `cat:${s.cat.value}`;
+      if (s.days > 0) query = `(${query}) AND ${arxivDateFilter(s.days)}`;
       const p = new URLSearchParams();
       p.set("search_query", query);
       p.set("start", "0");
@@ -1668,7 +1677,7 @@
       const s = currentState();
       s.sort = b.dataset.sort;
       renderSort(state.channel === "design", s.sort);
-      rangeEl.classList.toggle("hidden", state.channel === "hf" || state.channel === "papers" || state.channel === "arxiv" || (state.channel === "design" && s.sort === "new"));
+      rangeEl.classList.toggle("hidden", state.channel === "hf" || state.channel === "papers" || (state.channel === "design" && s.sort === "new"));
       load(true);
     });
 
@@ -1676,7 +1685,7 @@
       const b = e.target.closest(".chip"); if (!b) return;
       const s = currentState();
       if (state.channel === "design") s.days = parseInt(b.dataset.d, 10);
-      else if (state.channel === "cited") s.days = parseInt(b.dataset.d, 10);
+      else if (state.channel === "cited" || state.channel === "arxiv") s.days = parseInt(b.dataset.d, 10);
       else s.hours = parseInt(b.dataset.h, 10);
       [...rangeEl.children].forEach((x) => x.classList.toggle("active", x === b));
       load(true);
