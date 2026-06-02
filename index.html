@@ -526,7 +526,7 @@
     const DEV_API = "https://dev.to/api";
     const GITHUB_API = "https://api.github.com";
     const HF_API = "https://huggingface.co/api";
-    const S2_API = "https://api.semanticscholar.org/graph/v1/paper/search";
+    const OPENALEX_API = "https://api.openalex.org/works";
     const PAPERS_API = "https://huggingface.co/api/daily_papers";
     // arXiv sends no CORS headers; browser fetches go through public CORS proxies (tried in order).
     const ARXIV_API = "https://export.arxiv.org/api/query";
@@ -682,11 +682,11 @@
       cited: {
         logo: "📈",
         title: "CitePulse",
-        subtitle: "高被引精选 · 来自 Semantic Scholar",
+        subtitle: "高被引精选 · 来自 OpenAlex",
         placeholder: "Search high-impact papers — e.g. attention, systolic array, RLHF…",
-        footerUrl: "https://www.semanticscholar.org/product/api",
-        footerLabel: "Semantic Scholar API",
-        footerText: "ranked by citations & influence",
+        footerUrl: "https://openalex.org",
+        footerLabel: "OpenAlex API",
+        footerText: "ranked by citation count",
       },
       hf: {
         logo: "🤗",
@@ -1474,28 +1474,34 @@
       }
     }
 
-    function citedCardHtml(p) {
-      const url = p.url || (p.paperId ? "https://www.semanticscholar.org/paper/" + p.paperId : "#");
-      const cites = p.citationCount || 0;
-      const infl = p.influentialCitationCount || 0;
+    function openAlexAbstract(inv) {
+      if (!inv) return "";
+      const arr = [];
+      for (const w in inv) for (const i of inv[w]) arr[i] = w;
+      return arr.join(" ").replace(/\s+/g, " ").trim();
+    }
+
+    function citedCardHtml(w) {
+      const url = w.doi || w.id || "#";
+      const cites = w.cited_by_count || 0;
       const hot = cites >= 1000 ? " hot" : "";
       const flame = cites >= 1000 ? "🔥 " : "";
-      const authors = (p.authors || []).map((a) => a.name).filter(Boolean);
+      const authors = (w.authorships || []).map((a) => a.author && a.author.display_name).filter(Boolean);
       const who = authors.length ? authors[0] + (authors.length > 1 ? " 等" : "") : "";
-      const meta = [p.venue, p.year].filter(Boolean).join(" · ");
-      const abs = (p.abstract || "").replace(/\s+/g, " ").trim();
+      const venue = w.primary_location && w.primary_location.source ? w.primary_location.source.display_name : "";
+      const meta = [venue, w.publication_year].filter(Boolean).join(" · ");
+      const abs = openAlexAbstract(w.abstract_inverted_index);
       return `
         <article class="card">
           <div class="source">
-            <span>semanticscholar.org</span>
+            <span>openalex.org</span>
             <span class="dot">·</span>
             <span>${escapeHtml(meta)}</span>
           </div>
-          <h2 class="tr-title"><a href="${escapeHtml(url)}" class="title-link" target="_blank" rel="noopener"><span class="tr-zh pending"></span><span class="tr-en">${escapeHtml(p.title || "(untitled)")}</span></a></h2>
+          <h2 class="tr-title"><a href="${escapeHtml(url)}" class="title-link" target="_blank" rel="noopener"><span class="tr-zh pending"></span><span class="tr-en">${escapeHtml(w.display_name || "(untitled)")}</span></a></h2>
           <p class="desc">${escapeHtml(abs.slice(0, 200))}${abs.length > 200 ? "…" : ""}</p>
           <div class="foot">
             <span class="stat points${hot}">${flame}📈 ${cites.toLocaleString()} cites</span>
-            <span class="stat react" title="influential citations">⭐ ${infl.toLocaleString()}</span>
             <span class="spacer"></span>
             <span class="author">${escapeHtml(who)}</span>
           </div>
@@ -1505,11 +1511,12 @@
     function buildCitedUrl() {
       const s = state.cited;
       const p = new URLSearchParams();
-      p.set("query", s.custom || s.cat.q);
-      p.set("limit", "60");
-      p.set("fields", "title,abstract,year,venue,citationCount,influentialCitationCount,authors,url,publicationDate");
-      if (s.years > 0) p.set("year", (new Date().getFullYear() - s.years + 1) + "-");
-      return `${S2_API}?${p.toString()}`;
+      p.set("search", s.custom || s.cat.q);
+      p.set("sort", s.sort === "new" ? "publication_date:desc" : "cited_by_count:desc");
+      p.set("per-page", "50");
+      if (s.years > 0) p.set("filter", "from_publication_date:" + (new Date().getFullYear() - s.years + 1) + "-01-01");
+      p.set("mailto", "techpulse.reader@example.com");
+      return `${OPENALEX_API}?${p.toString()}`;
     }
 
     async function loadCited(reset) {
@@ -1528,10 +1535,10 @@
         const res = await fetch(buildCitedUrl(), { signal: myController.signal });
         if (!res.ok) throw new Error("HTTP " + res.status);
         const data = await res.json();
-        let items = ((data && data.data) || []).filter((x) => x && x.title);
-        // Semantic Scholar search returns by relevance; re-rank client-side by impact or recency.
-        const yr = (x) => new Date(x.publicationDate || (x.year ? x.year + "-01-01" : 0)).getTime();
-        items.sort((a, b) => s.sort === "new" ? yr(b) - yr(a) : (b.citationCount || 0) - (a.citationCount || 0));
+        let items = ((data && data.results) || []).filter((x) => x && x.display_name);
+        // OpenAlex sorts server-side; keep a defensive client-side re-rank.
+        const yr = (x) => new Date(x.publication_date || (x.publication_year ? x.publication_year + "-01-01" : 0)).getTime();
+        items.sort((a, b) => s.sort === "new" ? yr(b) - yr(a) : (b.cited_by_count || 0) - (a.cited_by_count || 0));
         if (reset) grid.innerHTML = "";
         if (!items.length) {
           statusEl.textContent = "No results — try another topic or keyword.";
@@ -1539,7 +1546,7 @@
           grid.insertAdjacentHTML("beforeend", items.map(citedCardHtml).join(""));
           statusEl.textContent = "";
         }
-        countEl.textContent = items.length ? `${items.length} papers · ${s.sort === "new" ? "newest first" : "most cited"} · Semantic Scholar · Fetched ${fetchStamp()}` : "";
+        countEl.textContent = items.length ? `${items.length} papers · ${s.sort === "new" ? "newest first" : "most cited"} · OpenAlex · Fetched ${fetchStamp()}` : "";
         moreBtn.style.display = "none";
         lastLoadTs = Date.now();
         if (s.zh) translateVisible();
@@ -1547,7 +1554,7 @@
         if (myController.signal.aborted && !timedOut) return;
         if (reset) grid.innerHTML = "";
         statusEl.className = "status err";
-        statusEl.textContent = timedOut ? "⚠️ Semantic Scholar timed out — please refresh." : "⚠️ Could not load Semantic Scholar (it may be rate-limited). Please refresh.";
+        statusEl.textContent = timedOut ? "⚠️ OpenAlex timed out — please refresh." : "⚠️ Could not load OpenAlex. Please refresh.";
       } finally {
         clearTimeout(timer);
         s.loading = false;
