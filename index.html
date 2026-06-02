@@ -528,8 +528,9 @@
     const HF_API = "https://huggingface.co/api";
     const OPENALEX_API = "https://api.openalex.org/works";
     const PAPERS_API = "https://huggingface.co/api/daily_papers";
-    // arXiv sends no CORS headers; browser fetches go through public CORS proxies (tried in order).
+    // arXiv sends no CORS headers; browser fetches need a CORS-safe source.
     const ARXIV_API = "https://export.arxiv.org/api/query";
+    const ARXIV_OPENALEX_SOURCE_ID = "S2800959247";
     const ARXIV_PROXIES = [
       "https://corsproxy.io/?url=",
       "https://api.allorigins.win/raw?url=",
@@ -622,6 +623,16 @@
       { id: "sy", label: "🛠 Systems (eess.SY)", value: "eess.SY" },
       { id: "sp", label: "📡 Signal (eess.SP)", value: "eess.SP" },
     ];
+    const ARXIV_CATEGORY_SEARCH = {
+      "cs.LG": "machine learning",
+      "cs.AI": "artificial intelligence",
+      "cs.CL": "natural language processing large language model",
+      "cs.AR": "computer architecture hardware accelerator",
+      "cs.NE": "neural computation",
+      "cs.CV": "computer vision",
+      "eess.SY": "control systems",
+      "eess.SP": "signal processing",
+    };
 
     const CITED_CATEGORIES = [
       { id: "ml", label: "🧠 ML", q: "machine learning" },
@@ -1399,12 +1410,52 @@
         </article>`;
     }
 
+    function openAlexArxivUrl(work) {
+      const locations = [work.best_oa_location, work.primary_location, ...(work.locations || [])].filter(Boolean);
+      const arxivLoc = locations.find((loc) => {
+        const id = loc.source && loc.source.id ? String(loc.source.id) : "";
+        return id.endsWith("/" + ARXIV_OPENALEX_SOURCE_ID) || id.endsWith(ARXIV_OPENALEX_SOURCE_ID);
+      });
+      return (arxivLoc && (arxivLoc.landing_page_url || arxivLoc.pdf_url)) || work.doi || work.id || "#";
+    }
+
+    function openAlexArxivCardHtml(work) {
+      const url = openAlexArxivUrl(work);
+      const title = work.display_name || "(untitled)";
+      const summary = openAlexAbstract(work.abstract_inverted_index);
+      const published = work.publication_date || (work.publication_year ? work.publication_year + "-01-01" : new Date().toISOString());
+      const authors = (work.authorships || []).map((a) => a.author && a.author.display_name).filter(Boolean);
+      const who = authors.length ? authors[0] + (authors.length > 1 ? " 等" : "") : "";
+      const topic = work.primary_topic && ((work.primary_topic.subfield && work.primary_topic.subfield.display_name) || work.primary_topic.display_name);
+      const tags = [topic, "arXiv"].filter(Boolean);
+      return `
+        <article class="card">
+          <div class="source">
+            <span>arxiv.org</span>
+            <span class="dot">·</span>
+            <span>${timeAgoIso(published)}</span>
+          </div>
+          <div class="tags">${tagPills(tags, 3)}</div>
+          <h2 class="tr-title"><a href="${escapeHtml(url)}" class="title-link" target="_blank" rel="noopener"><span class="tr-zh pending"></span><span class="tr-en">${escapeHtml(title)}</span></a></h2>
+          <p class="desc">${escapeHtml(summary.slice(0, 220))}${summary.length > 220 ? "…" : ""}</p>
+          <div class="foot">
+            <span class="stat">OpenAlex index</span>
+            <span class="spacer"></span>
+            <span class="author">${escapeHtml(who)}</span>
+          </div>
+        </article>`;
+    }
+
     function arxivDateFilter(days) {
       // arXiv expects submittedDate:[YYYYMMDDHHMM TO YYYYMMDDHHMM] (UTC)
       const pad = (n) => String(n).padStart(2, "0");
       const fmt = (d) => `${d.getUTCFullYear()}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}`;
       const from = new Date(Date.now() - days * 86400000);
       return `submittedDate:[${fmt(from)} TO ${fmt(new Date())}]`;
+    }
+
+    function dateForDays(days) {
+      return new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
     }
 
     function buildArxivUrl() {
@@ -1418,6 +1469,20 @@
       p.set("sortBy", s.sort === "new" ? "submittedDate" : "relevance");
       p.set("sortOrder", "descending");
       return `${ARXIV_API}?${p.toString()}`;
+    }
+
+    function buildOpenAlexArxivUrl() {
+      const s = state.arxiv;
+      const p = new URLSearchParams();
+      const filters = [`locations.source.id:${ARXIV_OPENALEX_SOURCE_ID}`];
+      const search = (s.custom || ARXIV_CATEGORY_SEARCH[s.cat.value] || s.cat.value).trim();
+      if (s.days > 0) filters.push("from_publication_date:" + dateForDays(s.days));
+      if (search) p.set("search", search);
+      if (s.sort === "new") p.set("sort", "publication_date:desc");
+      p.set("filter", filters.join(","));
+      p.set("per-page", PER_PAGE);
+      p.set("mailto", "techpulse.reader@example.com");
+      return `${OPENALEX_API}?${p.toString()}`;
     }
 
     async function fetchViaProxies(rawUrl, signal, perTryMs) {
@@ -1456,28 +1521,46 @@
       if (controller) controller.abort();
       controller = new AbortController();
       const myController = controller;
+      let timedOut = false;
+      const timer = setTimeout(() => { timedOut = true; myController.abort(); }, 18000);
 
       try {
-        const xml = await fetchViaProxies(buildArxivUrl(), myController.signal, 9000);
-        const doc = new DOMParser().parseFromString(xml, "application/xml");
-        const entries = [...doc.getElementsByTagName("entry")];
+        let cards = "";
+        let countText = "";
+        const emptyText = "No arXiv results — try another keyword or category.";
+        try {
+          const res = await fetch(buildOpenAlexArxivUrl(), { signal: myController.signal });
+          if (!res.ok) throw new Error("HTTP " + res.status);
+          const data = await res.json();
+          const items = ((data && data.results) || []).filter((x) => x && x.display_name);
+          cards = items.map(openAlexArxivCardHtml).join("");
+          countText = items.length ? `${items.length} papers · ${s.sort === "new" ? "newest first" : "most relevant"} · arXiv via OpenAlex · Fetched ${fetchStamp()}` : "";
+        } catch (openAlexError) {
+          if (myController.signal.aborted || openAlexError.name === "AbortError") throw openAlexError;
+          const xml = await fetchViaProxies(buildArxivUrl(), myController.signal, 5000);
+          const doc = new DOMParser().parseFromString(xml, "application/xml");
+          const entries = [...doc.getElementsByTagName("entry")];
+          cards = entries.map(arxivCardHtml).join("");
+          countText = entries.length ? `${entries.length} papers · ${s.sort === "new" ? "newest first" : "most relevant"} · arXiv source · Fetched ${fetchStamp()}` : "";
+        }
         if (reset) grid.innerHTML = "";
-        if (!entries.length) {
-          statusEl.textContent = "No arXiv results — try another keyword or category.";
+        if (!cards) {
+          statusEl.textContent = emptyText;
         } else {
-          grid.insertAdjacentHTML("beforeend", entries.map(arxivCardHtml).join(""));
+          grid.insertAdjacentHTML("beforeend", cards);
           statusEl.textContent = "";
         }
-        countEl.textContent = entries.length ? `${entries.length} papers · ${s.sort === "new" ? "newest first" : "most relevant"} · arXiv source · Fetched ${fetchStamp()}` : "";
+        countEl.textContent = countText;
         moreBtn.style.display = "none";
         lastLoadTs = Date.now();
         if (s.zh) translateVisible();
       } catch (e) {
-        if (myController.signal.aborted || e.name === "AbortError") return;
+        if ((myController.signal.aborted || e.name === "AbortError") && !timedOut) return;
         if (reset) grid.innerHTML = "";
         statusEl.className = "status err";
-        statusEl.textContent = "⚠️ Could not load arXiv — public CORS proxies are slow or blocked. Try again, or use a dedicated proxy/backend.";
+        statusEl.textContent = timedOut ? "⚠️ arXiv timed out — please refresh." : "⚠️ Could not load arXiv — OpenAlex and public CORS proxies are unavailable. Please refresh.";
       } finally {
+        clearTimeout(timer);
         s.loading = false;
         moreBtn.disabled = false;
       }
