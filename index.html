@@ -211,7 +211,7 @@
       display: flex; align-items: center; justify-content: space-between;
       margin: 4px 2px 16px; color: var(--muted); font-size: 13px;
     }
-    .meta-line .range { display: flex; gap: 6px; }
+    .range { display: flex; gap: 6px; align-items: center; flex: 0 0 auto; }
     .range .chip { padding: 5px 11px; font-size: 12px; }
     .range.hidden { display: none; }
 
@@ -475,6 +475,12 @@
           <button data-sort="top" class="active">🔥 Top</button>
           <button data-sort="new">🕒 New</button>
         </div>
+        <span class="range" id="range">
+          <span class="chip" data-h="24">24h</span>
+          <span class="chip active" data-h="168">Week</span>
+          <span class="chip" data-h="720">Month</span>
+          <span class="chip" data-h="8760">Year</span>
+        </span>
         <button class="lang-btn" id="langToggle" title="标题/摘要中英对照（机器翻译）" style="display:none">译 中</button>
       </div>
     </div>
@@ -483,12 +489,6 @@
   <main>
     <div class="meta-line">
       <span id="count"></span>
-      <span class="range" id="range">
-        <span class="chip" data-h="24">24h</span>
-        <span class="chip active" data-h="168">Week</span>
-        <span class="chip" data-h="720">Month</span>
-        <span class="chip" data-h="8760">Year</span>
-      </span>
     </div>
     <div class="grid" id="grid"></div>
     <div class="status" id="status"></div>
