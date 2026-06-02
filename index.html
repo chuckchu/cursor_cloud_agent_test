@@ -661,6 +661,10 @@
       return d + "秒前";
     }
 
+    function fetchStamp() {
+      return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    }
+
     function renderChrome() {
       const isDesign = state.channel === "design";
       const meta = channelMeta[state.channel];
@@ -1044,7 +1048,7 @@
           statusEl.textContent = "";
         }
         const total = data.nbHits || 0;
-        countEl.textContent = total ? `${total.toLocaleString()} stories · ${s.sort === "new" ? "newest first" : "most upvoted"}` : "";
+        countEl.textContent = total ? `${total.toLocaleString()} stories · ${s.sort === "new" ? "newest first" : "most upvoted"} · Fetched ${fetchStamp()}` : "";
         moreBtn.style.display = s.page + 1 < s.pages ? "block" : "none";
         lastLoadTs = Date.now();
       } catch (e) {
@@ -1081,8 +1085,7 @@
           statusEl.textContent = "";
         }
         const shown = grid.querySelectorAll(".design-card:not(.skeleton)").length;
-        const hhmm = new Date().toTimeString().slice(0, 5);
-        countEl.textContent = shown ? `已加载 ${shown} 篇 · ${s.sort === "new" ? "最新发布" : "热门优先"} · 更新于 ${hhmm}` : "";
+        countEl.textContent = shown ? `已加载 ${shown} 篇 · ${s.sort === "new" ? "最新发布" : "热门优先"} · 抓取于 ${fetchStamp()}` : "";
         moreBtn.style.display = s.lastCount === PER_PAGE ? "block" : "none";
         lastLoadTs = Date.now();
         if (s.zh) translateVisible();
@@ -1121,7 +1124,7 @@
           statusEl.textContent = "";
         }
         const shown = grid.querySelectorAll(".card:not(.skeleton)").length;
-        countEl.textContent = shown ? `${shown.toLocaleString()} repos · ${s.sort === "new" ? "recently updated" : "most starred"} · GitHub source` : "";
+        countEl.textContent = shown ? `${shown.toLocaleString()} repos · ${s.sort === "new" ? "recently updated" : "most starred"} · GitHub source · Fetched ${fetchStamp()}` : "";
         moreBtn.style.display = s.page * PER_PAGE < s.total && s.lastCount === PER_PAGE ? "block" : "none";
         lastLoadTs = Date.now();
       } catch (e) {
@@ -1157,7 +1160,7 @@
           statusEl.textContent = "";
         }
         const shown = grid.querySelectorAll(".card:not(.skeleton)").length;
-        countEl.textContent = shown ? `${shown.toLocaleString()} models · ${s.sort === "new" ? "recently updated" : "trending"} · Hugging Face source` : "";
+        countEl.textContent = shown ? `${shown.toLocaleString()} models · ${s.sort === "new" ? "recently updated" : "trending"} · Hugging Face source · Fetched ${fetchStamp()}` : "";
         moreBtn.style.display = "none";
         lastLoadTs = Date.now();
       } catch (e) {
