@@ -520,9 +520,13 @@
     const GITHUB_API = "https://api.github.com";
     const HF_API = "https://huggingface.co/api";
     const PAPERS_API = "https://huggingface.co/api/daily_papers";
-    // arXiv sends no CORS headers, so browser fetches are routed through a public CORS proxy.
+    // arXiv sends no CORS headers; browser fetches go through public CORS proxies (tried in order).
     const ARXIV_API = "https://export.arxiv.org/api/query";
-    const ARXIV_PROXY = "https://api.allorigins.win/raw?url=";
+    const ARXIV_PROXIES = [
+      "https://corsproxy.io/?url=",
+      "https://api.allorigins.win/raw?url=",
+      "https://thingproxy.freeboard.io/fetch/",
+    ];
     const DEV_HEADERS = { "Accept": "application/vnd.forem.api-v1+json" };
     const PER_PAGE = 24;
 
@@ -1286,9 +1290,12 @@
       moreBtn.disabled = true;
       if (controller) controller.abort();
       controller = new AbortController();
+      const myController = controller;
+      let timedOut = false;
+      const timer = setTimeout(() => { timedOut = true; myController.abort(); }, 12000);
 
       try {
-        const res = await fetch(`${PAPERS_API}?limit=100`, { signal: controller.signal });
+        const res = await fetch(`${PAPERS_API}?limit=60`, { signal: myController.signal });
         if (!res.ok) throw new Error("HTTP " + res.status);
         let items = await res.json();
         if (!Array.isArray(items)) items = [];
@@ -1316,11 +1323,12 @@
         lastLoadTs = Date.now();
         if (s.zh) translateVisible();
       } catch (e) {
-        if (e.name === "AbortError") return;
+        if (e.name === "AbortError" && !timedOut) return;
         if (reset) grid.innerHTML = "";
         statusEl.className = "status err";
-        statusEl.textContent = "⚠️ Could not load papers from Hugging Face. Please refresh.";
+        statusEl.textContent = timedOut ? "⚠️ Hugging Face Papers timed out — please refresh." : "⚠️ Could not load papers from Hugging Face. Please refresh.";
       } finally {
+        clearTimeout(timer);
         s.loading = false;
         moreBtn.disabled = false;
       }
@@ -1364,7 +1372,34 @@
       p.set("max_results", PER_PAGE);
       p.set("sortBy", s.sort === "new" ? "submittedDate" : "relevance");
       p.set("sortOrder", "descending");
-      return ARXIV_PROXY + encodeURIComponent(`${ARXIV_API}?${p.toString()}`);
+      return `${ARXIV_API}?${p.toString()}`;
+    }
+
+    async function fetchViaProxies(rawUrl, signal, perTryMs) {
+      // Try each CORS proxy in turn; first one that returns a usable body wins.
+      let lastErr = null;
+      for (const proxy of ARXIV_PROXIES) {
+        if (signal.aborted) throw new DOMException("aborted", "AbortError");
+        const ac = new AbortController();
+        const onAbort = () => ac.abort();
+        signal.addEventListener("abort", onAbort);
+        const timer = setTimeout(() => ac.abort(), perTryMs);
+        try {
+          const target = proxy.endsWith("=") ? proxy + encodeURIComponent(rawUrl) : proxy + rawUrl;
+          const res = await fetch(target, { signal: ac.signal });
+          if (!res.ok) throw new Error("HTTP " + res.status);
+          const text = await res.text();
+          if (text && text.indexOf("<entry") !== -1) return text;
+          lastErr = new Error("empty response");
+        } catch (e) {
+          if (signal.aborted) throw new DOMException("aborted", "AbortError");
+          lastErr = e; // timeout or proxy error -> try the next proxy
+        } finally {
+          clearTimeout(timer);
+          signal.removeEventListener("abort", onAbort);
+        }
+      }
+      throw (lastErr || new Error("all proxies failed"));
     }
 
     async function loadArxiv(reset) {
@@ -1375,11 +1410,10 @@
       moreBtn.disabled = true;
       if (controller) controller.abort();
       controller = new AbortController();
+      const myController = controller;
 
       try {
-        const res = await fetch(buildArxivUrl(), { signal: controller.signal });
-        if (!res.ok) throw new Error("HTTP " + res.status);
-        const xml = await res.text();
+        const xml = await fetchViaProxies(buildArxivUrl(), myController.signal, 9000);
         const doc = new DOMParser().parseFromString(xml, "application/xml");
         const entries = [...doc.getElementsByTagName("entry")];
         if (reset) grid.innerHTML = "";
@@ -1394,10 +1428,10 @@
         lastLoadTs = Date.now();
         if (s.zh) translateVisible();
       } catch (e) {
-        if (e.name === "AbortError") return;
+        if (myController.signal.aborted || e.name === "AbortError") return;
         if (reset) grid.innerHTML = "";
         statusEl.className = "status err";
-        statusEl.textContent = "⚠️ Could not load arXiv (the CORS proxy may be busy). Please refresh.";
+        statusEl.textContent = "⚠️ Could not load arXiv — public CORS proxies are slow or blocked. Try again, or use a dedicated proxy/backend.";
       } finally {
         s.loading = false;
         moreBtn.disabled = false;
